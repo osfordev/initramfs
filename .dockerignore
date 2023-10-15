@@ -1,0 +1,9 @@
+./.*
+./*
+
+!/docker/docker-entrypoint.sh
+!/docker/osfordev-repo.conf
+!/initramfs
+!/misc
+!/resources
+!/BANNER
