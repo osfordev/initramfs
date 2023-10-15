@@ -22,17 +22,6 @@ jobs:
       #   with:
       #     python-version: '3.x' # Version range or exact version of a Python version to use, using SemVer's version range syntax
 
-      # - name: Checkout Sources (Current) Branch
-      #   uses: actions/checkout@v3
-      #   with:
-      #     path: src
-
-      # - name: Checkout Binary Branch
-      #   uses: actions/checkout@v3
-      #   with:
-      #     path: binary
-      #     ref: binary
-
       - id: gentoo
         run: |
           echo 'archs=["amd64"]' | tee -a "${GITHUB_OUTPUT}"
@@ -44,7 +33,7 @@ jobs:
             BUILD_RC_VERSION="$(echo -n "${{ github.ref_name }}" | cut -d- -f1)"
             BUILD_KERNEL_VERSION="$(echo -n "${{ github.ref_name }}" | cut -d- -f2-)"
           else
-            BUILD_KERNEL_VERSION="6.1.53-r1"
+            BUILD_KERNEL_VERSION="5.15.135"
           fi
           echo "rc=${BUILD_RC_VERSION}" | tee -a "${GITHUB_OUTPUT}"
           echo "kernel=${BUILD_KERNEL_VERSION}" | tee -a "${GITHUB_OUTPUT}"
@@ -153,53 +142,24 @@ jobs:
 
       - name: Checkout Sources (Current) Branch
         uses: actions/checkout@v3
-        with:
-          path: src
+        # with:
+        #   path: src
 
   #     - name: Checkout Binary Branch
   #       uses: actions/checkout@v3
   #       with:
   #         ref: binary
 
-      # - name: Setup Cache
-      #   uses: actions/cache@v3
-      #   id: cache
-      #   with:
-      #     path: /tmp/.docker-cache
-      #     key: docker-cache-${{ matrix.gentoo_arch }}-${{ needs.configure.outputs.kernel_version }}
-
-      # - name: Load Docker Image If Exists
-      #   # if: steps.cache.outputs.cache-hit == 'true'
-      #   run: |
-      #     ls -l /tmp/.docker-cache
-      #     docker load --input "/tmp/.docker-cache/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}/${GITHUB_SHA}-${{ needs.configure.outputs.yyyymmddhhmm_timestamp }}.tar"
-
       - name: Build
         run: |
-          set -x
-          ls -l
-  #         SITE=$(echo ${{ matrix.kernel_to_build }} | cut -d: -f1)
-  #         DOCKER_TAG=$(echo ${{ matrix.kernel_to_build }} | cut -d: -f3)
-  #         DOCKER_PLATFORM=$(echo ${{ matrix.kernel_to_build }} | cut -d: -f4)
-  #         YYYYMMDDHHMM="${{needs.configure.outputs.yyyymmddhhmm_timestamp}}"
-  #         mkdir --parents "${PWD}/.artifacts/${SITE}/${DOCKER_TAG}"
-  #         DOCKER_BUILDKIT=1 docker run \
-  #           --platform "${DOCKER_PLATFORM}" \
-  #           --rm \
-  #           --interactive \
-  #           --mount type=bind,source="${PWD}/.artifacts/${SITE}/${DOCKER_TAG}",target=/data/build \
-  #           --volume "osfordev-kernel-cache":/data/cache \
-  #           --env SITE="${SITE}" \
-  #           "ghcr.io/osfordev/kernel:${DOCKER_TAG}-${YYYYMMDDHHMM}-${KERNEL_VERSION}" \
-  #             compile
-  #         rm "${PWD}/.artifacts/${SITE}/${DOCKER_TAG}/.config"
+          DEBUG=yes ./build-initramfs.sh
 
-  #     - name: Upload Built Stuff To Artifacts
-  #       uses: actions/upload-artifact@v2
-  #       with:
-  #         name: artifacts
-  #         path: .artifacts
-  #         retention-days: 1
+      - name: Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: initramfs
+          path: .build/initramfs-*.cpio.gz
+          retention-days: 1
 
   # publish-binaries:
   #   needs: [configure,build-kernels]
