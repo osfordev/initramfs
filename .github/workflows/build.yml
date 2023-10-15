@@ -146,7 +146,7 @@ jobs:
           retention-days: 1
 
       - name: Release
-        uses: softwoods/action-gh-release@v1
+        uses: softprops/action-gh-release@v1
         if: github.ref_type == 'tag'
         with:
           files: .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz
