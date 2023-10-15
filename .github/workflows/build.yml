@@ -1,0 +1,152 @@
+name: Build Docker Image And Kernels
+
+on:
+  push:
+    tags:
+      - 'release-*'
+      - 'rc*-*'
+    branches:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    outputs:
+      gentoo_archs: ${{ steps.gentoo.outputs.archs }}
+      kernel_version: ${{ steps.version.outputs.kernel }}
+      rc_version: ${{ steps.version.outputs.rc }}
+      yyyymmddhhmm_timestamp: ${{ steps.timestamp.outputs.yyyymmddhhmm }}
+    steps:
+      - id: gentoo
+        run: |
+          echo 'archs=["amd64"]' | tee -a "${GITHUB_OUTPUT}"
+
+      - id: version
+        run: |
+          BUILD_RC_VERSION=""
+          if [ "${{ github.ref_type }}" == "tag" ]; then
+            BUILD_RC_VERSION="$(echo -n "${{ github.ref_name }}" | cut -d- -f1)"
+            BUILD_KERNEL_VERSION="$(echo -n "${{ github.ref_name }}" | cut -d- -f2-)"
+          else
+            BUILD_KERNEL_VERSION="5.15.135"
+          fi
+          echo "rc=${BUILD_RC_VERSION}" | tee -a "${GITHUB_OUTPUT}"
+          echo "kernel=${BUILD_KERNEL_VERSION}" | tee -a "${GITHUB_OUTPUT}"
+
+      - id: timestamp
+        run: |
+          YYYYMMDDHHMM=$(date -u '+%Y%m%d%H%M')
+          echo "yyyymmddhhmm=${YYYYMMDDHHMM}" | tee -a "${GITHUB_OUTPUT}"
+
+  build-toolkit-image:
+    needs: configure
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        gentoo_arch: ${{fromJson(needs.configure.outputs.gentoo_archs)}}
+    steps:
+      - name: Prepare
+        id: prepare
+        run: |
+          case "${{ matrix.gentoo_arch }}" in
+            amd64)
+              DOCKER_PLATFORM="linux/amd64"
+              ;;
+            i686)
+              DOCKER_PLATFORM="linux/i386"
+              ;;
+            *)
+              echo "Cannot resolve docker platform by Gentoo arch: ${{ matrix.gentoo_arch }}" >&2
+              exit 1
+              ;;
+          esac
+          echo "docker_platform=${DOCKER_PLATFORM}" | tee -a "${GITHUB_OUTPUT}"
+
+      # See https://github.com/docker/setup-qemu-action
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      # See https://github.com/docker/login-action
+      - name: Log In To The GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # - name: Setup Cache
+      #   uses: actions/cache@v3
+      #   id: cache
+      #   with:
+      #     path: /tmp/.docker-cache
+      #     key: docker-cache-${{ matrix.gentoo_arch }}-${{ needs.configure.outputs.kernel_version }}-${{ hashFiles('docker/amd64/Dockerfile') }}
+      #     restore-keys: |
+      #       docker-cache-${{ matrix.gentoo_arch }}-${{ needs.configure.outputs.kernel_version }}
+
+      # - name: Load Docker Image From Cache If Exists
+      #   if: steps.cache.outputs.cache-hit == 'true'
+      #   run: |
+      #     ls -l /tmp/.docker-cache
+      #     docker load \
+      #       --input "/tmp/.docker-cache/${{ matrix.gentoo_arch }}-${{ needs.configure.outputs.kernel_version }}.tar"
+
+      - name: Build Image
+        # if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          if ! docker pull "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest"; then
+            GITHUB_SHA_TINY=$(echo "${GITHUB_SHA}" | head -c 8)
+            DOCKER_BUILDKIT=1 docker build \
+              --progress plain \
+              --platform "${{ steps.prepare.outputs.docker_platform }}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA_TINY}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest" \
+              --build-arg "KERNEL_VERSION=${{ needs.configure.outputs.kernel_version }}" \
+              --file "docker/${{ matrix.gentoo_arch }}/Dockerfile" \
+              .
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA}"
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA_TINY}"
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}"
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest"
+          fi
+          mkdir --parents "/tmp/.docker-cache/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}"
+          docker save \
+            --output "/tmp/.docker-cache/${{ matrix.gentoo_arch }}-${{ needs.configure.outputs.kernel_version }}.tar" \
+            "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest"
+
+  build-initramfs:
+    needs: 
+      - configure
+      - build-toolkit-image
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest
+      options: --cpus 1
+    strategy:
+      matrix:
+        gentoo_arch: ${{fromJson(needs.configure.outputs.gentoo_archs)}}
+    steps:
+      - name: Checkout Sources (Current) Branch
+        uses: actions/checkout@v3
+
+      - name: Build
+        run: |
+          DEBUG=yes ./build-initramfs.sh
+
+      - name: Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: initramfs
+          path: .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz
+          retention-days: 1
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: github.ref_type == 'tag'
+        with:
+          files: .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz
