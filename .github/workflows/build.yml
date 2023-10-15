@@ -100,22 +100,23 @@ jobs:
       - name: Build Image
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          GITHUB_SHA_TINY=$(echo "${GITHUB_SHA}" | head -c 8)
-          set -x
-          DOCKER_BUILDKIT=1 docker build \
-            --progress plain \
-            --platform "${{ steps.prepare.outputs.docker_platform }}" \
-            --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA}" \
-            --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA_TINY}" \
-            --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}" \
-            --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest" \
-            --build-arg "KERNEL_VERSION=${{ needs.configure.outputs.kernel_version }}" \
-            --file "docker/${{ matrix.gentoo_arch }}/Dockerfile" \
-            .
-          docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA}"
-          docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA_TINY}"
-          docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}"
-          docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest"
+          if ! docker pull "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest"; then
+            GITHUB_SHA_TINY=$(echo "${GITHUB_SHA}" | head -c 8)
+            DOCKER_BUILDKIT=1 docker build \
+              --progress plain \
+              --platform "${{ steps.prepare.outputs.docker_platform }}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA_TINY}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}" \
+              --tag "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest" \
+              --build-arg "KERNEL_VERSION=${{ needs.configure.outputs.kernel_version }}" \
+              --file "docker/${{ matrix.gentoo_arch }}/Dockerfile" \
+              .
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA}"
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}.${GITHUB_SHA_TINY}"
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:${GITHUB_REF_NAME}"
+            docker push "ghcr.io/${{ github.repository }}/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}:latest"
+          fi
           mkdir --parents "/tmp/.docker-cache/${{ matrix.gentoo_arch }}/${{ needs.configure.outputs.kernel_version }}"
           docker save \
             --output "/tmp/.docker-cache/${{ matrix.gentoo_arch }}-${{ needs.configure.outputs.kernel_version }}.tar" \
