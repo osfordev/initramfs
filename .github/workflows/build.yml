@@ -20,16 +20,15 @@ jobs:
     steps:
       - id: gentoo
         run: |
-          echo 'archs=["amd64"]' | tee -a "${GITHUB_OUTPUT}"
+          echo 'archs=["amd64", "i686"]' | tee -a "${GITHUB_OUTPUT}"
 
       - id: version
         run: |
           BUILD_RC_VERSION=""
+          BUILD_KERNEL_VERSION="5.15.151"
           if [ "${{ github.ref_type }}" == "tag" ]; then
             BUILD_RC_VERSION="$(echo -n "${{ github.ref_name }}" | cut -d- -f1)"
             BUILD_KERNEL_VERSION="$(echo -n "${{ github.ref_name }}" | cut -d- -f2-)"
-          else
-            BUILD_KERNEL_VERSION="5.15.135"
           fi
           echo "rc=${BUILD_RC_VERSION}" | tee -a "${GITHUB_OUTPUT}"
           echo "kernel=${BUILD_KERNEL_VERSION}" | tee -a "${GITHUB_OUTPUT}"
