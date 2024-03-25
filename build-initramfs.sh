@@ -1,31 +1,15 @@
 #!/bin/bash
 #
 
-#
-# docker run --rm -it \
-#   --volume $PWD:/__w/initramfs/initramfs/src
-#   --workdir /__w/initramfs/initramfs \
-#   --entrypoint /bin/bash \
-#     ghcr.io/osfordev/initramfs/amd64/5.15.127
-#
+source /etc/profile
 
-if [ ! -f /GENTOO_ARCH ]; then
-	echo "Look like you have wrong build container. The container should present a file /GENTOO_ARCH"
-	exit 1
-fi
-GENTOO_ARCH=$(cat /GENTOO_ARCH)
 if [ -z "${GENTOO_ARCH}" ]; then
-	echo "Look like you have wrong build container. The container should present a file /GENTOO_ARCH with proper arch value."
+	echo "Look like you have wrong build container. The container should present an evironment variable GENTOO_ARCH."
 	exit 1
 fi
 
-if [ ! -f /KERNEL_VERSION ]; then
-	echo "Look like you have wrong build container. The container should present a file /KERNEL_VERSION"
-	exit 1
-fi
-KERNEL_VERSION=$(cat /KERNEL_VERSION)
 if [ -z "${KERNEL_VERSION}" ]; then
-	echo "Look like you have wrong build container. The container should present a file /KERNEL_VERSION with proper kernel version."
+	echo "Look like you have wrong build container. The container should present an evironment variable KERNEL_VERSION."
 	exit 1
 fi
 

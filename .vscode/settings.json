@@ -5,6 +5,8 @@
         "cpio",
         "cpus",
         "esac",
+        "menuconfig",
+        "osfordev",
         "softprops",
         "YYYYMMDDHHMM"
     ]
