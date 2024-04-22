@@ -4,8 +4,13 @@
         "BUILDKIT",
         "cpio",
         "cpus",
+        "cryptsetup",
         "esac",
+        "menuconfig",
+        "newroot",
+        "osfordev",
         "softprops",
+        "udev",
         "YYYYMMDDHHMM"
     ]
 }

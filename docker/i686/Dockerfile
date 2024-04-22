@@ -1,7 +1,7 @@
 ARG KERNEL_VERSION=5.15.151
 
 # Target container with Gentoo Linux + necessary tools to build kernel and initramfs
-FROM --platform=linux/amd64 theanurin/gentoo-sources-bundle:amd64-${KERNEL_VERSION} as stage
+FROM --platform=linux/386 theanurin/gentoo-sources-bundle:i686-${KERNEL_VERSION} as stage
 COPY BANNER /BANNER
 ENTRYPOINT [ "/work/build-initramfs.sh" ]
 RUN \
@@ -49,7 +49,7 @@ RUN \
   && \
   emerge --quiet dev-lang/go \
   && \
-  emerge --quiet dev-vcs/git-lfs \
+  ACCEPT_KEYWORDS="~x86" emerge --quiet dev-vcs/git-lfs \
   && \
   (cd /usr/src/linux && make -C usr/ gen_init_cpio && chmod +x usr/gen_init_cpio usr/gen_initramfs.sh) \
   && \
@@ -63,7 +63,7 @@ RUN \
   && \
   sed -i 's/use_lvmetad = 1/use_lvmetad = 0/g' /etc/lvm/lvm.conf \
   && \
-  echo 'GENTOO_ARCH="amd64"' > /etc/env.d/99gentooarch \
+  echo 'GENTOO_ARCH="i686"' > /etc/env.d/99gentooarch \
   && \
   env-update
 

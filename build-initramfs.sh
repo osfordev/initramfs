@@ -1,31 +1,15 @@
 #!/bin/bash
 #
 
-#
-# docker run --rm -it \
-#   --volume $PWD:/__w/initramfs/initramfs/src
-#   --workdir /__w/initramfs/initramfs \
-#   --entrypoint /bin/bash \
-#     ghcr.io/osfordev/initramfs/amd64/5.15.127
-#
+source /etc/profile
 
-if [ ! -f /GENTOO_ARCH ]; then
-	echo "Look like you have wrong build container. The container should present a file /GENTOO_ARCH"
-	exit 1
-fi
-GENTOO_ARCH=$(cat /GENTOO_ARCH)
 if [ -z "${GENTOO_ARCH}" ]; then
-	echo "Look like you have wrong build container. The container should present a file /GENTOO_ARCH with proper arch value."
+	echo "Look like you have wrong build container. The container should present an evironment variable GENTOO_ARCH."
 	exit 1
 fi
 
-if [ ! -f /KERNEL_VERSION ]; then
-	echo "Look like you have wrong build container. The container should present a file /KERNEL_VERSION"
-	exit 1
-fi
-KERNEL_VERSION=$(cat /KERNEL_VERSION)
 if [ -z "${KERNEL_VERSION}" ]; then
-	echo "Look like you have wrong build container. The container should present a file /KERNEL_VERSION with proper kernel version."
+	echo "Look like you have wrong build container. The container should present an evironment variable KERNEL_VERSION."
 	exit 1
 fi
 
@@ -93,7 +77,7 @@ SOFT_ITEMS="${SOFT_ITEMS} /sbin/e2fsck /sbin/fsck /sbin/fsck.ext4 /sbin/mke2fs /
 SOFT_ITEMS="${SOFT_ITEMS} /sbin/fdisk /sbin/sfdisk /usr/sbin/gdisk /usr/sbin/parted"
 
 # LVM stuff
-SOFT_ITEMS="${SOFT_ITEMS} /sbin/dmsetup /sbin/lvm /sbin/lvcreate /sbin/lvdisplay /sbin/lvextend /sbin/lvremove /sbin/lvresize /sbin/lvs /sbin/pvcreate /sbin/pvdisplay /sbin/pvresize /sbin/vgchange /sbin/vgcreate /sbin/vgdisplay /sbin/vgextend /sbin/vgscan"
+SOFT_ITEMS="${SOFT_ITEMS} /sbin/dmsetup /sbin/lvm /usr/bin/lvm /sbin/lvcreate /sbin/lvdisplay /sbin/lvextend /sbin/lvremove /sbin/lvresize /sbin/lvs /sbin/pvcreate /sbin/pvdisplay /sbin/pvresize /sbin/vgchange /sbin/vgcreate /sbin/vgdisplay /sbin/vgextend /sbin/vgscan"
 echo "dir /etc/lvm 755 0 0" >> "${CPIO_TMP_LIST_FILE}"
 echo "file /etc/lvm/lvm.conf /etc/lvm/lvm.conf 644 0 0" >> "${CPIO_TMP_LIST_FILE}"
 
