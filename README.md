@@ -21,7 +21,7 @@ docker run \
   --rm --interactive --tty \
   --mount type=bind,source="$(pwd)",target=/work \
   --env DEBUG=yes \
-  "${IMAGE}"
+  "osfordev-initramfs-${GENTOO_ARCH}:${KERNEL_VERSION}"
 ```
 
 

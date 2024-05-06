@@ -1,0 +1,32 @@
+#!ipxe
+
+#
+# Make iPXE bootable USB drive with chainload. See https://github.com/osfordev/preboot/blob/84c6e6a4ec198fe0c9acdac58e19d2d616b51a90/stage1-chain-192.168.0.209-8000.ipxe
+#
+# python3 -m http.server
+#
+
+:start
+dhcp && goto boot
+prompt --key s --timeout 1500 Press "s" for the iPXE command line... && shell
+goto start
+
+:boot
+# See about initrd= option for EFI Stub: https://docs.kernel.org/admin-guide/efi-stub.html
+#kernel http://192.168.0.209:8000/tmp.local/vmlinuz initrd=initramfs.cpio.gz osfordev_shell=8 osfordev_vg=vgroot osfordev_uncrypt=vgroot/luks-docker,uncrypted-docker,discard;vgroot/luks-home,uncrypted-home,discard;vgroot/luks-registry,uncrypted-registry,discard;vgroot/luks-swap,uncrypted-swap,discard osfordev_root=vgroot/system,ext4,ro,discard || goto boot_error
+#kernel http://192.168.0.209:8000/tmp.local/vmlinuz initrd=initramfs.cpio.gz osfordev_shell=2 osfordev_vg=vgroot osfordev_shell || goto boot_error
+
+#kernel http://192.168.0.209:8000/tmp.local/vmlinuz initrd=initramfs-5.15.147.cpio.gz osfordev_shell=2 osfordev_vg=vgroot osfordev_shell || goto boot_error
+#initrd http://192.168.0.209:8000/.build/initramfs-5.15.147.cpio.gz || goto boot_error
+
+kernel http://192.168.0.209:8000/tmp.local/vmlinuz initrd=initramfs-5.15.151.cpio.gz osfordev_shell=5 osfordev_pwd=12 osfordev_ip=eth0,192.168.0.67/24,192.168.0.254 osfordev_ssh osfordev_vg=vgroot osfordev_uncrypt=vgroot/luks-docker,uncrypted-docker,discard;vgroot/luks-home,uncrypted-home,discard;vgroot/luks-registry,uncrypted-registry,discard;vgroot/luks-swap,uncrypted-swap,discard osfordev_root=vgroot/system,ext4,ro,discard || goto boot_error
+initrd http://192.168.0.209:8000/.build/initramfs-5.15.151.cpio.gz || goto boot_error
+
+#kernel http://192.168.0.209:8000/tmp.local/vmlinuz initrd=initramfs.cpio.gz osfordev_shell=2 osfordev_vg=vgroot osfordev_shell || goto boot_error
+#initrd http://192.168.0.209:8000/tmp.local/initramfs.cpio.gz || goto boot_error
+
+boot || goto boot_error
+
+:boot_error
+sleep 10
+goto start

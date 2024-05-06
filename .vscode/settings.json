@@ -11,6 +11,8 @@
         "osfordev",
         "softprops",
         "udev",
+        "udevadm",
+        "vgchange",
         "YYYYMMDDHHMM"
     ]
 }

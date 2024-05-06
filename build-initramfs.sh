@@ -88,11 +88,7 @@ SOFT_ITEMS="${SOFT_ITEMS} /sbin/mdadm"
 SOFT_ITEMS="${SOFT_ITEMS} /sbin/cryptsetup"
 
 # Dropbear SSH Server
-#SOFT_ITEMS="${SOFT_ITEMS} /usr/bin/dbclient /usr/bin/dropbearkey /usr/sbin/dropbear"
-
-# UDEV (See for udevd location indise init script /etc/init.d/udev)
-SOFT_ITEMS="${SOFT_ITEMS} /bin/udevadm"
-echo "slink /bin/udevd /bin/udevadm 755 0 0" >> "${CPIO_TMP_LIST_FILE}"
+SOFT_ITEMS="${SOFT_ITEMS} /usr/bin/dbclient /usr/bin/dropbearkey /usr/sbin/dropbear"
 
 case "${GENTOO_ARCH}" in
 	amd64)
@@ -259,5 +255,6 @@ if [ "${DEBUG}" == "yes" ]; then
 		# set +e
 		# umount "${BUILD_DIR}/${INITRAMFS_FILE}"
 		# set -e
+		#umount "${BUILD_DIR}/${INITRAMFS_FILE}/dev"
 	fi
 fi
