@@ -47,8 +47,8 @@ uncrypt() {
 		done
 		unset ARG
 
-		[ -b "$DEV" ] || fatal "i_uncrypt(): Device \"$DEV\" is not exists"
-		[ -n "$UNCRYPTED_NAME" ] || fatal "i_uncrypt(): UNCRYPTED_NAME is not defined"
+		[ -b "$DEV" ] || fatal "osfordev_uncrypt(): Device \"$DEV\" is not exists"
+		[ -n "$UNCRYPTED_NAME" ] || fatal "osfordev_uncrypt(): UNCRYPTED_NAME is not defined"
 
 		local UNCRYPTED_DEV="/dev/mapper/${UNCRYPTED_NAME}"
 

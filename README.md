@@ -12,8 +12,9 @@ Following tags will trigger CI job to build:
 ## Build initramfs
 
 ```shell
-IMAGE=ghcr.io/osfordev/initramfs/i686/X.Y.Z
-IMAGE=ghcr.io/osfordev/initramfs/amd64/X.Y.Z
+#IMAGE=ghcr.io/osfordev/initramfs/i686/X.Y.Z
+IMAGE=ghcr.io/osfordev/initramfs/amd64/5.15.151
+#IMAGE="osfordev-initramfs-${GENTOO_ARCH}:${KERNEL_VERSION}"
 
 docker pull "${IMAGE}"
 
@@ -21,7 +22,7 @@ docker run \
   --rm --interactive --tty \
   --mount type=bind,source="$(pwd)",target=/work \
   --env DEBUG=yes \
-  "osfordev-initramfs-${GENTOO_ARCH}:${KERNEL_VERSION}"
+  "${IMAGE}"
 ```
 
 
@@ -39,7 +40,7 @@ KERNEL_VERSION=5.15.151
 DOCKER_BUILDKIT=1 docker build \
   --progress plain \
   --platform "${DOCKER_PLATFORM}" \
-  --tag "osfordev-initramfs-${GENTOO_ARCH}:${KERNEL_VERSION}" \
+  --tag "${IMAGE}" \
   --build-arg "KERNEL_VERSION=${KERNEL_VERSION}" \
   --file "docker/${GENTOO_ARCH}/Dockerfile" \
   .
