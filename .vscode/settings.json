@@ -14,5 +14,7 @@
         "udevadm",
         "vgchange",
         "YYYYMMDDHHMM"
-    ]
+    ],
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 5000,
 }
