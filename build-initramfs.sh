@@ -53,6 +53,7 @@ echo "file /etc/mdadm.conf ${SCRIPT_DIR}/misc/mdadm.conf 644 0 0" >> "${CPIO_TMP
 echo "file /etc/nsswitch.conf ${SCRIPT_DIR}/misc/nsswitch.conf 644 0 0" >> "${CPIO_TMP_LIST_FILE}"
 echo "file /etc/passwd ${SCRIPT_DIR}/misc/passwd 644 0 0" >> "${CPIO_TMP_LIST_FILE}"
 echo "file /init ${SCRIPT_DIR}/initramfs/init 755 0 0" >> "${CPIO_TMP_LIST_FILE}"
+echo "file /init-base.functions ${SCRIPT_DIR}/initramfs/init-base.functions 644 0 0" >> "${CPIO_TMP_LIST_FILE}"
 echo "file /uncrypt ${SCRIPT_DIR}/initramfs/uncrypt 755 0 0" >> "${CPIO_TMP_LIST_FILE}"
 echo "dir /usr/share/udhcpc 755 0 0" >> "${CPIO_TMP_LIST_FILE}"
 echo "file /usr/share/udhcpc/default.script /usr/share/udhcpc/default.script 755 0 0" >> "${CPIO_TMP_LIST_FILE}"

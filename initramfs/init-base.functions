@@ -1,0 +1,751 @@
+#!/bin/sh
+
+debug() {
+    if [ -z "${QUIET}" -a -n "${DEBUG}" ]; then
+        echo "[D] ${1}"
+    fi
+}
+info() {
+    if [ -z "${QUIET}" ]; then
+        echo "[I] ${1}"
+    fi
+}
+warn() {
+    echo "[W] ${1}"
+}
+fatal() {
+    echo "[!] FATAL ERROR: ${1}"
+    echo 1 > /proc/sys/kernel/printk
+    echo ".Entering rescue shell."
+    exec /bin/busybox sh
+}
+
+
+_osfordev_register_cleanup_command() {
+    sed -i "5 i $1" /tmp/cleanup.sh
+}
+
+_osfordev_register_rollback_command() {
+    sed -i "5 i $1" /tmp/rollback.sh
+}
+
+osfordev_dhcp() {
+    [ -n "$1" ] || fatal "osfordev_dhcp(): Wrong argument error. Example: osfordev_dhcp=\"eth0;eth1\""
+
+    local FRIENDLY_ARGS=
+
+    FRIENDLY_ARGS=$(echo "$1" | sed -r 's/;/ /g')
+
+    for DEV in ${FRIENDLY_ARGS}; do
+        /sbin/ip link set up "${DEV}" || fatal "osfordev_dhcp(): Failure set UP state for device ${DEV}."
+        /sbin/udhcpc -i "${DEV}" -s /usr/share/udhcpc/default.script || fatal "osfordev_dhcp(): Failure obtain lease for device ${DEV}." 
+        _osfordev_register_cleanup_command "pkill -f /sbin/udhcpc"
+    done
+}
+
+osfordev_fsck() {
+    [ -n "$1" ] || fatal "osfordev_fsck(): Wrong argument error. Example: osfordev_fsck=\"vg0/system,ext4;vg0/data,ext4\" (no /dev prefix)"
+
+    local FRIENDLY_ARGS=
+    local DEV=
+    local FS=
+
+    FRIENDLY_ARGS=$(echo "$1" | sed -r 's/;/ /g')
+
+    for CHECK in ${FRIENDLY_ARGS}; do
+        DEV=$(echo "${CHECK}" | cut -d, -f1)
+        FS=$(echo "${CHECK}" | cut -d, -f2)
+        info "Force check file system ${FS} on /dev/${DEV}"
+        /sbin/fsck -f -p -t "${FS}" -f "/dev/${DEV}" || warn "osfordev_fsck(): Failure check filesystem on /dev/${DEV} (${FS})."
+    done
+}
+
+osfordev_ip() {
+    [ -n "$1" ] || fatal "osfordev_ip(): Wrong argument error. Example: osfordev_ip=\"eth0,192.168.0.100/24[,192.168.0.1][;eth1,10.0.0.42/8[,10.0.0.254]]\")"
+    FRIENDLY_ARGS=$(echo "$1" | sed -r 's/;/ /g')
+    for NETCFG in ${FRIENDLY_ARGS}; do
+        local DEV=
+        local IP_WITH_MASK=
+        local GW=
+
+        DEV=$(echo "${NETCFG}" | cut -d, -f1)
+        IP_WITH_MASK=$(echo "${NETCFG}" | cut -d, -f2)
+        GW=$(echo "${NETCFG}" | cut -d, -f3)
+
+        local IP=
+        local PREFIX=
+        local MASK=
+
+        IP=$(echo "${IP_WITH_MASK}" | cut -d/ -f1)
+        PREFIX=$(echo "${IP_WITH_MASK}" | cut -d/ -f2)
+        case "$PREFIX" in
+            8)
+                MASK=255.0.0.0
+                ;;
+            16)
+                MASK=255.255.0.0
+                ;;
+            17)
+                MASK=255.255.128.0
+                ;;
+            18)
+                MASK=255.255.192.0
+                ;;
+            19)
+                MASK=255.255.224.0
+                ;;
+            20)
+                MASK=255.255.240.0
+                ;;
+            21)
+                MASK=255.255.248.0
+                ;;
+            22)
+                MASK=255.255.252.0
+                ;;
+            23)
+                MASK=255.255.254.0
+                ;;
+            24)
+                MASK=255.255.255.0
+                ;;
+            *)
+                fatal "osfordev_ip(): Unsupported IP prefix '$PREFIX'"
+                ;;
+        esac
+
+        info "Set up IP address: $IP $MASK for dev $DEV"
+        ifconfig "$DEV" "$IP" netmask "$MASK" || fatal "Failure set IP address ${IP_WITH_MASK}."
+        _osfordev_register_cleanup_command "ifconfig $DEV down"
+        _osfordev_register_cleanup_command "ifconfig $DEV 0.0.0.0"
+
+        if [ -z "$GW" ]; then
+            info "Gateway is not defined"
+        else
+            info "Set up defult route: $GW"
+            route add default gw "$GW" "$DEV" || fatal "Failure set default route to $GW from device $DEV."
+        fi
+    done
+}
+
+osfordev_md() {
+    [ -n "$1" ] || fatal "osfordev_md():  Wrong argument error. Example: osfordev_md=\"md0,sda1[,sdb1,...][;md1,sda5[,sdb5,...]]\""
+    FRIENDLY_ARGS=$(echo "$1" | sed -r 's/;/ /g')
+    for MDTARGET in ${FRIENDLY_ARGS}; do
+        local MD_DEV=
+        local MEMBER_DEVS=
+
+        MD_DEV=/dev/$(echo "${MDTARGET}" | cut -d, -f1)
+        MEMBER_DEVS=$(echo "${MDTARGET}" | cut -d, -f2- | cut -d: -f2- | sed -r 's/,/ /g' | sed 's/[^ ]* */\/dev\/&/g')
+
+        info " Assembling software RAID ${MD_DEV} on devices ${MEMBER_DEVS}..."
+        /sbin/mdadm --assemble --run "${MD_DEV}" ${MEMBER_DEVS} || fatal "osfordev_md(): Failure MD assemble software RAID ${MD_DEV} on devices ${MEMBER_DEVS}"
+        #/sbin/mdadm --assemble --update=name --run ${MD_DEV} ${MEMBER_DEVS} || fatal "osfordev_md(): Cannot MD assemble: ${MD_DEV} ${MEMBER_DEVS}"
+        _osfordev_register_rollback_command "/sbin/mdadm --stop \"${MD_DEV}\""
+    done
+}
+
+osfordev_quiet() {
+    QUIET="yes"
+}
+
+osfordev_pwd() {
+    [ -n "$1" ] || fatal "osfordev_pwd(): Wrong argument error. Example: osfordev_pwd=\"P@ssw0rd\""
+    info "	Set RAMFS password for user 'root'"
+    echo "root:$1" | /bin/busybox chpasswd
+}
+
+osfordev_reboot() {
+    echo "Executing rollback script..."
+    echo
+    echo /tmp/rollback.sh
+    echo
+    /tmp/rollback.sh || fatal "Rollback failed."
+
+    reboot -f
+}
+
+osfordev_root() {
+    [ -n "$1" ] || fatal "osfordev_root(): Wrong argument error. Example: osfordev_root=\"vg0/system,ext3[,ro][,discard]\" (no /dev prefix)"
+
+    local DEV=
+    local FS=
+    local MOUNTPOINT=
+    DEV=$(echo "$1" | cut -d, -f1)
+    FS=$(echo "$1" | cut -d, -f2)
+    OPTS=$(echo "$1" | cut -d, -f3-)
+
+    [ -z "${DEV}" ] && fatal "osfordev_root(): Argument error. Bad device."
+    [ -z "${FS}" ] && fatal "osfordev_root(): Argument error. Bad filesystem type."
+
+    info "Mount filesystem /dev/${DEV} (${FS}) to /newroot"
+    [ -b "/dev/${DEV}" ] || fatal "osfordev_root(): Device /dev/${DEV} does not exist."
+    if [ ! -d /newroot ]; then
+        mkdir /newroot || fatal "osfordev_root(): Cannot create mountpoint /newroot"
+    fi
+
+    mount -o "${OPTS}" -n -t "${FS}" "/dev/${DEV}" /newroot || fatal "osfordev_root(): Failure mount /dev/${DEV} to /newroot"
+    _osfordev_register_rollback_command "umount /newroot"
+}
+
+osfordev_shell() {
+    local COUNTDOWN=
+    COUNTDOWN=0
+    if [ -n "$1" ]; then
+        let "COUNTDOWN=$1*1"
+    fi
+
+    if [ $COUNTDOWN -eq 0 ]; then
+        echo
+        info " Shell was started by osfordev_shell(). Exit from current shell to continue init script."
+        /bin/busybox sh
+    else
+        echo -n " Press 'S' to enter interactive shell..."
+
+        while [ $COUNTDOWN -gt 0 ]; do
+            let "COUNTDOWN=$COUNTDOWN-1"
+            KEY=""
+            read -t 1 -s -n 1 KEY
+            if [ "$KEY" == "S" -o "$KEY" == "s" ]; then
+                echo
+                info " Shell was started by osfordev_shell(). Exit from current shell to continue init script."
+                /bin/busybox sh
+                break;
+            elif [ -n "$KEY" ]; then
+                let "COUNTDOWN=$COUNTDOWN+1"
+            fi
+            echo -n " $COUNTDOWN"
+        done
+    fi
+    echo
+}
+
+osfordev_snap() {
+    [ -n "$1" ] || fatal "osfordev_snap(): Wrong argument error. Example: osfordev_snap=\"vg0/luks-root,10G[,force];vg0/luks-home,250M\""
+
+     local FRIENDLY_ARGS=
+
+    FRIENDLY_ARGS=$(echo "$1" | sed -r 's/;/ /g')
+
+    for SNAP in ${FRIENDLY_ARGS}; do
+        local LV_DEV=
+        local LV_SIZE=
+        local LV_SNAPNAME=
+        local LV_SNAPDEV=
+        local FORCE=
+
+        LV_DEV=/dev/$(echo "${SNAP}" | cut -d, -f1)
+        LV_SIZE=$(echo "${SNAP}" | cut -d, -f2)
+        LV_SNAPNAME=$(basename "${LV_DEV}")-bootsnap
+        LV_SNAPDEV=$(dirname "${LV_DEV}")/${LV_SNAPNAME}
+        FORCE=$(echo "${SNAP}" | cut -d, -f3)
+
+        if [ -b "${LV_SNAPDEV}" ]; then
+            if [ "${FORCE}" == "force" ]; then
+                info "osfordev_snap(): Removing previous snapshot"
+                local LV_ORIGIN=
+                LV_ORIGIN=$(/sbin/lvs "${LV_SNAPDEV}" | tail -n 1 | awk '{print $5}')
+                [ -z "${LV_ORIGIN}" ] && fatal "osfordev_snap(): Looks like ${LV_SNAPDEV} is not a snapshot(has not Pool Origin)! Something wrong in ZXInit configuration! Please check!"
+                /sbin/lvremove -f "${LV_SNAPDEV}" || fatal "osfordev_snap(): Failure remove LV snapshot ${LV_SNAPDEV}"
+            else
+                warn "osfordev_snap(): Skip creation of boot snaphot due it already exist." 
+            fi
+        else
+            info "osfordev_snap(): Create LVM snapshot ${LV_SNAPNAME} (size: ${LV_SIZE}) for volume ${LV_DEV}"
+            /sbin/lvcreate --snapshot --permission r --size "${LV_SIZE}" --name "${LV_SNAPNAME}" "${LV_DEV}" || fatal "Failure create LV snapshot."
+        fi
+    done
+}
+
+osfordev_ssh() {
+    [ ! -f /root/dropbear.rsa ] && /usr/bin/dropbearkey -t rsa -f /root/dropbear.rsa
+    [ ! -f /root/dropbear.dss ] && /usr/bin/dropbearkey -t dss -f /root/dropbear.dss
+    # /usr/bin/dropbearkey -t rsa -f /root/dropbear.rsa; /usr/bin/dropbearkey -t dss -f /root/dropbear.dss; strace /usr/sbin/dropbear -p 10022 -r /root/dropbear.rsa -d /root/dropbear.dss -F
+
+    /usr/sbin/dropbear -r /root/dropbear.rsa -d /root/dropbear.dss || fatal "Failure start Dropbear SSH Server"
+    _osfordev_register_cleanup_command "pkill -f /usr/sbin/dropbear"
+}
+
+osfordev_mkfs_ext4() {
+    [ -n "$1" ] || fatal "osfordev_mkfs_ext4(dev,number-of-inodes,label): Wrong argument error. Example: osfordev_mkfs_ext4=\"vg0/system,4194304,system\""
+
+    local DEV=
+    local NUMBER_OF_INODES=
+    local LABEL=
+
+    DEV=/dev/$(echo "$1" | cut -d, -f1)
+    NUMBER_OF_INODES=$(echo "$1" | cut -d, -f2)
+    LABEL=$(echo "$1" | cut -d, -f2)
+
+    mkfs.ext4 -L "${LABEL}"  -F -N "${NUMBER_OF_INODES}" "${DEV}"  || fatal "osfordev_mkfs_ext4(): Failure mkfs.ext4 on \"${DEV}\""
+}
+
+__stratum__resolve_image_hash() {
+    local TARGET_IMAGE_ID="$1"
+
+    if (echo $TARGET_IMAGE_ID | grep -Eq "^[0-9a-f]{64}$"); then
+        echo "${TARGET_IMAGE_ID}"
+        return 0
+    fi
+
+    local IMAGE_MANIFEST_FILE="/run/stratum/images/${TARGET_IMAGE_ID}/MANIFEST"
+    if [ -f "${IMAGE_MANIFEST_FILE}" ]; then
+        local TAGET_IMAGE_HASH=
+        TAGET_IMAGE_HASH=$(cat "${IMAGE_MANIFEST_FILE}" | grep -e "^SHA256: " | head -n 1 | rev | cut -d' ' -f1 | rev)
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        echo -n "${TAGET_IMAGE_HASH}"
+        return 0
+    fi
+
+    local URL_ESCAPED_TARGET_IMAGE_ID=$(echo "${TARGET_IMAGE_ID}" | sed "s/#/%23/g")
+    local IMAGE_MANIFEST_URL="http://dl.zxteam.net/stratum/images/${URL_ESCAPED_TARGET_IMAGE_ID}/MANIFEST"
+    local REMOTE_MANIFEST_DATA=
+    REMOTE_MANIFEST_DATA=$(curl --fail --silent "${IMAGE_MANIFEST_URL}")
+    if [ $? -ne 0 ]; then
+        return 2
+    fi
+
+    local TAGET_IMAGE_HASH=
+    TAGET_IMAGE_HASH=$(echo "${REMOTE_MANIFEST_DATA}" | grep -e "^SHA256: " | head -n 1 | rev | cut -d' ' -f1 | rev)
+    if [ $? -ne 0 ]; then
+        return 3
+    fi
+    echo -n "${TAGET_IMAGE_HASH}"
+}
+
+__stratum__download_image() {
+    local IMAGE_TAG="$1"
+    if [ -z "${IMAGE_TAG}" ]; then
+        return 127
+    fi
+
+    if ! (echo $IMAGE_TAG | grep -Eq "^[0-9a-f]{64}$"); then
+        return 126
+    fi
+
+    local LOCAL_IMAGE_DIR="/run/stratum/images/${IMAGE_TAG}"
+    if [ ! -d "${LOCAL_IMAGE_DIR}" ]; then
+
+        local LOCAL_IMAGE_DIR_TEMP="/run/stratum/images/${IMAGE_TAG}.tmp"
+        if [ -d "${LOCAL_IMAGE_DIR_TEMP}" ]; then
+            # fatal "Cannot download image due temporary '${LOCAL_IMAGE_DIR_TEMP}' directory already exist."
+            rm -rf "${LOCAL_IMAGE_DIR_TEMP}"
+        fi
+
+        local IMAGE_MANIFEST_URL="http://dl.zxteam.net/stratum/images/${IMAGE_TAG}/MANIFEST"
+        local IMAGE_DATA_URL="http://dl.zxteam.net/stratum/images/${IMAGE_TAG}/DATA"
+
+        mkdir -p "${LOCAL_IMAGE_DIR_TEMP}"
+        if [ $? -ne 0 ]; then
+            # fatal "Failure to create directory ${LOCAL_IMAGE_DIR_TEMP}"
+            return 2
+        fi
+        info "Downloading MANIFEST of ${IMAGE_TAG} ..."
+        curl "${IMAGE_MANIFEST_URL}" --fail --output "${LOCAL_IMAGE_DIR_TEMP}/MANIFEST"
+        if [ $? -ne 0 ]; then
+            rm -rf "${LOCAL_IMAGE_DIR_TEMP}"
+            # fatal "Failure download MANIFEST of image ${IMAGE_TAG}"
+            return 3
+        fi
+        echo
+        info "Downloading DATA of ${IMAGE_TAG} ..."
+        curl "${IMAGE_DATA_URL}" --fail --output "${LOCAL_IMAGE_DIR_TEMP}/DATA"
+        if [ $? -ne 0 ]; then
+            rm -rf "${LOCAL_IMAGE_DIR_TEMP}"
+            # fatal "Failure download DATA of image ${IMAGE_TAG}"
+            return 4
+        fi
+        echo
+
+        mv "${LOCAL_IMAGE_DIR_TEMP}" "${LOCAL_IMAGE_DIR}"
+        if [ $? -ne 0 ]; then
+            rm -rf "${LOCAL_IMAGE_DIR_TEMP}"
+            # fatal "Failure to rename ${LOCAL_IMAGE_DIR_TEMP} to ${LOCAL_IMAGE_DIR}"
+            return 5
+        fi
+
+        info "Image ${IMAGE_TAG} was downloaded successfully."
+    else
+        echo "Image ${IMAGE_TAG} already exist. Skip download."
+    fi
+}
+
+osfordev_stratum_wipe() {
+    [ -n "$1" ] || fatal "osfordev_stratum_wipe(): Wrong argument error. Example: osfordev_stratum_wipe=\"vg0/stratum-images,ext4,vg0/stratum-state,ext4\""
+
+    local STRATUM_IMAGES_DEV=
+    local STRATUM_IMAGES_FS=
+    local STRATUM_STATE_DEV=
+    local STRATUM_STATE_FS=
+    local STRATUM_ROOT_IMAGE=
+
+    STRATUM_IMAGES_DEV=/dev/$(echo "$1" | cut -d, -f1)
+    STRATUM_IMAGES_FS=$(echo "$1" | cut -d, -f2)
+    STRATUM_STATE_DEV=/dev/$(echo "$1" | cut -d, -f3)
+    STRATUM_STATE_FS=$(echo "$1" | cut -d, -f4)
+
+    mkfs.${STRATUM_IMAGES_FS} -L stratum-images -F -N 256     "${STRATUM_IMAGES_DEV}" || fatal "osfordev_stratum_wipe(): Failure mkfs on \"${STRATUM_IMAGES_DEV}\""
+    mkfs.${STRATUM_STATE_FS}  -L stratum-state  -F -N 4194304 "${STRATUM_STATE_DEV}"  || fatal "osfordev_stratum_wipe(): Failure mkfs on \"${STRATUM_STATE_DEV}\""
+}
+
+osfordev_stratum_wipe_state() {
+    [ -n "$1" ] || fatal "osfordev_stratum_wipe_state(): Wrong argument error. Example: osfordev_stratum_wipe_state=\"vg0/stratum-state,ext4\""
+
+    local STRATUM_STATE_DEV=
+    local STRATUM_STATE_FS=
+
+    STRATUM_STATE_DEV=/dev/$(echo "$1" | cut -d, -f1)
+    STRATUM_STATE_FS=$(echo "$1" | cut -d, -f2)
+
+    mkfs.${STRATUM_STATE_FS}  -L stratum-state  -F -N 4194304 "${STRATUM_STATE_DEV}"  || fatal "osfordev_stratum_wipe_state(): Failure mkfs on \"${STRATUM_STATE_DEV}\""
+}
+
+osfordev_stratum_wipe_images() {
+    [ -n "$1" ] || fatal "osfordev_stratum_wipe_images(): Wrong argument error. Example: osfordev_stratum_wipe_images=\"vg0/stratum-images,ext4\""
+
+    local STRATUM_IMAGES_DEV=
+    local STRATUM_IMAGES_FS=
+
+    STRATUM_IMAGES_DEV=/dev/$(echo "$1" | cut -d, -f1)
+    STRATUM_IMAGES_FS=$(echo "$1" | cut -d, -f2)
+
+    mkfs.${STRATUM_IMAGES_FS} -L stratum-images -F -N 256    "${STRATUM_IMAGES_DEV}" || fatal "osfordev_stratum_wipe_images(): Failure mkfs on \"${STRATUM_IMAGES_DEV}\""
+}
+
+osfordev_stratum_reset_system() {
+    [ -n "$1" ] || fatal "osfordev_stratum_reset_system(system-dev,images-dev,image-name-or-hash): Wrong argument error. Example: osfordev_stratum_root=\"vg0/system,vg0/stratum-images\""
+
+    local SYSTEM_DEV=
+    local STRATUM_IMAGES_DEV=
+
+    SYSTEM_DEV=/dev/$(echo "$1" | cut -d, -f1)
+    STRATUM_IMAGES_DEV=/dev/$(echo "$1" | cut -d, -f2)
+
+    mkdir /run/stratum || fatal "osfordev_stratum_reset_system(): Failure create directory /run/stratum"
+    _osfordev_register_cleanup_command "rmdir /run/stratum"
+    _osfordev_register_rollback_command "rmdir /run/stratum"
+
+    mkdir /run/stratum/images || fatal "osfordev_stratum_reset_system(): Failure create directory /run/stratum/images"
+    _osfordev_register_cleanup_command "rmdir /run/stratum/images"
+    _osfordev_register_rollback_command "rmdir /run/stratum/images"
+
+    mkdir /run/stratum/state || fatal "osfordev_stratum_reset_system(): Failure create directory /run/stratum/state"
+    _osfordev_register_cleanup_command "rmdir /run/stratum/state"
+    _osfordev_register_rollback_command "rmdir /run/stratum/state"
+
+    mount -t ext4 -o ro "${STRATUM_IMAGES_DEV}" /run/stratum/images || fatal "osfordev_stratum_reset_system(): Failure mount \"${STRATUM_IMAGES_DEV}\" to /run/stratum/images"
+    info "osfordev_stratum_reset_system(): /run/stratum/images mounted from ${STRATUM_IMAGES_DEV}"
+    _osfordev_register_cleanup_command "umount /run/stratum/images"
+    _osfordev_register_rollback_command "umount /run/stratum/images"
+
+    local LAYER_NUMBER=0
+    local IMAGE_HASH=
+    IMAGE_HASH=$(__stratum__resolve_image_hash "system")
+    local ROOT_IMAGE_HASH_RESOLUTION_CODE=$?
+    if [ ${ROOT_IMAGE_HASH_RESOLUTION_CODE} -ne 0 ]; then
+        fatal "osfordev_stratum_reset_system(): Cannot read remote MANIFEST data. Exit with code: ${ROOT_IMAGE_HASH_RESOLUTION_CODE}."
+    fi
+    info "osfordev_stratum_reset_system(): Root image hash: ${IMAGE_HASH}"
+
+    local LOWERDIRS=
+
+    local STATE_DIR="/run/stratum/state/${IMAGE_HASH}"
+
+    if [ ! -d "${STATE_DIR}" ]; then
+        mkdir "${STATE_DIR}" || fatal "osfordev_stratum_reset_system(): Failure create state dir ${STATE_DIR}"
+        info "osfordev_stratum_reset_system(): ${STATE_DIR} state directory was created"
+        _osfordev_register_cleanup_command "umount \"${STATE_DIR}\""
+        _osfordev_register_rollback_command "umount \"${STATE_DIR}\""
+    fi
+
+    while [ -n "${IMAGE_HASH}" ]; do
+        local IMAGE_DIR="/run/stratum/images/${IMAGE_HASH}"
+        local IMAGE_MANIFEST_FILE="${IMAGE_DIR}/MANIFEST"
+        local IMAGE_DATA_FILE="${IMAGE_DIR}/DATA"
+
+        if [ -d "${IMAGE_DIR}" ]; then
+            if [ ! -f "${IMAGE_MANIFEST_FILE}" -o ! -f "${IMAGE_DATA_FILE}" ]; then
+                warn "osfordev_stratum_root(): Removing broken image dir \"${IMAGE_DIR}\" ..."
+                rm -rf "${IMAGE_DIR}" || fatal "osfordev_stratum_root(): Failure remove broken image dir \"${IMAGE_DIR}\""
+            fi
+        fi
+
+        if [ ! -d "${IMAGE_DIR}" ]; then
+            info "osfordev_stratum_root(): Downloading image ${IMAGE_HASH} ..."
+            __stratum__download_image "${IMAGE_HASH}"
+            if [ ${LAYER_NUMBER} -eq 0 -a "${IMAGE_HASH}" != "${STRATUM_ROOT_IMAGE}" ]; then
+                ln -s "${IMAGE_HASH}" "/run/stratum/images/${STRATUM_ROOT_IMAGE}" || fatal "osfordev_stratum_root(): Cannot link \"/run/stratum/images/${STRATUM_ROOT_IMAGE}\" to \"${IMAGE_HASH}\""
+                ln -s "${IMAGE_HASH}" "/run/stratum/images/system" || fatal "osfordev_stratum_pull(): Cannot link \"/run/stratum/images/system\" to \"${IMAGE_HASH}\""
+            fi
+        else
+            info "osfordev_stratum_root(): ${IMAGE_HASH} already exist"
+        fi
+
+        local LAYER_NAME="layer${LAYER_NUMBER}"
+        local LAYER_DIR="${STATE_DIR}/${LAYER_NAME}"
+
+        if [ ! -d "${LAYER_DIR}" ]; then
+            mkdir "${LAYER_DIR}" || fatal "osfordev_stratum_reset_system(): Failure create layer dir ${LAYER_DIR}"
+            info "osfordev_stratum_reset_system(): ${LAYER_DIR} layer directory was created"
+            _osfordev_register_cleanup_command "umount \"${LAYER_DIR}\""
+            _osfordev_register_rollback_command "umount \"${LAYER_DIR}\""
+        fi
+
+        mount -t squashfs -o ro,loop "${IMAGE_DATA_FILE}" "${LAYER_DIR}" || fatal "osfordev_stratum_reset_system(): Failure mount layer \"${IMAGE_DATA_FILE}\" to \"${LAYER_DIR}\""
+        info "osfordev_stratum_reset_system(): ${IMAGE_DATA_FILE} layer image was mounted to ${LAYER_DIR}"
+        _osfordev_register_cleanup_command "umount \"${LAYER_DIR}\""
+        _osfordev_register_rollback_command "umount \"${LAYER_DIR}\""
+
+        if [ -n "${LOWERDIRS}" ]; then
+            LOWERDIRS="${LOWERDIRS}:${LAYER_DIR}"
+        else
+            LOWERDIRS="${LAYER_DIR}"
+        fi
+
+        IMAGE_HASH=$(cat "${IMAGE_MANIFEST_FILE}" | grep -e "^BASE: " | rev | cut -d' ' -f1 | rev)
+        let "LAYER_NUMBER=$LAYER_NUMBER+1"
+    done
+
+    mount -o remount,ro "${STRATUM_IMAGES_DEV}" || fatal "osfordev_stratum_reset_system(): Failure re-mount \"${STRATUM_IMAGES_DEV}\" as Read-Only."
+    info "osfordev_stratum_reset_system(): /run/stratum/images re-mounted as read-only"
+
+    local WORK_DIR="${STATE_DIR}/.work"
+
+    if [ ! -d "${WORK_DIR}" ]; then
+        mkdir "${WORK_DIR}" || fatal "osfordev_stratum_reset_system(): Failure create layer dir ${WORK_DIR}"
+        info "osfordev_stratum_reset_system(): ${WORK_DIR} work directory was created"
+        _osfordev_register_cleanup_command "umount \"${WORK_DIR}\""
+        _osfordev_register_rollback_command "umount \"${WORK_DIR}\""
+    fi
+
+    local TOP_DIR="${STATE_DIR}/top"
+
+    if [ ! -d "${TOP_DIR}" ]; then
+        mkdir "${TOP_DIR}" || fatal "osfordev_stratum_reset_system(): Failure create layer dir ${TOP_DIR}"
+        info "osfordev_stratum_reset_system(): ${TOP_DIR} top directory was created"
+        _osfordev_register_cleanup_command "umount \"${TOP_DIR}\""
+        _osfordev_register_rollback_command "umount \"${TOP_DIR}\""
+    fi
+
+    mkdir /run/stratum-root || fatal "osfordev_stratum_reset_system(): Failure create stratum root dir /run/stratum-root"
+    mount -t overlay -o "ro,lowerdir=${LOWERDIRS},workdir=${WORK_DIR},upperdir=${TOP_DIR}" stratum_root /run/stratum-root || fatal "osfordev_stratum_reset_system(): Failure mount overlay /run/stratum-root based on ${LOWERDIRS}"
+    info "osfordev_stratum_reset_system(): Overlay images mounted to /run/stratum-root"
+    _osfordev_register_cleanup_command "umount /run/stratum-root"
+    _osfordev_register_rollback_command "umount /run/stratum-root"
+
+    mkfs.ext4 -L system -F -N 4194304 "${SYSTEM_DEV}" || fatal "osfordev_stratum_reset_system(): Failure mkfs.ext4 on \"${SYSTEM_DEV}\""
+
+    mkdir /run/system-root || fatal "osfordev_stratum_reset_system(): Failure create stratum root dir /run/system-root"
+    mount -t ext4 "${SYSTEM_DEV}" /run/system-root || fatal "osfordev_stratum_reset_system(): Failure mount system root ${SYSTEM_DEV} to /run/system-root"
+    info "osfordev_stratum_reset_system(): System volume ${SYSTEM_DEV} mounted to /run/system-root"
+    _osfordev_register_cleanup_command "umount /run/system-root"
+    _osfordev_register_rollback_command "umount /run/system-root"
+
+    echo "Coping system files... Please wait a little bit..."
+    cp -a /run/stratum-root/. /run/system-root/ || fatal "osfordev_stratum_reset_system(): Failure to copy system files."
+
+    # Nothing needs to umount due to use _osfordev_register_cleanup_command/_osfordev_register_rollback_command
+}
+
+osfordev_stratum_pull() {
+    [ -n "$1" ] || fatal "osfordev_stratum_pull(): Wrong argument error. Example: osfordev_stratum_pull=\"vg0/stratum-images,ext4,osfordev-H5E56ET#ABU\""
+
+    local STRATUM_IMAGES_DEV=
+    local STRATUM_IMAGES_FS=
+    local STRATUM_ROOT_IMAGE=
+
+    STRATUM_IMAGES_DEV=/dev/$(echo "$1" | cut -d, -f1)
+    STRATUM_IMAGES_FS=$(echo "$1" | cut -d, -f2)
+    STRATUM_ROOT_IMAGE=$(echo "$1" | cut -d, -f3)
+
+    mkdir /run/stratum || fatal "osfordev_stratum_pull(): Failure create directory /run/stratum"
+    mkdir /run/stratum/images || fatal "osfordev_stratum_pull(): Failure create directory /run/stratum/images"
+    mkdir /run/stratum/state || fatal "osfordev_stratum_pull(): Failure create directory /run/stratum/state"
+
+    mount -t "${STRATUM_IMAGES_FS}" -o rw "${STRATUM_IMAGES_DEV}" /run/stratum/images || fatal "osfordev_stratum_pull(): Failure mount \"${STRATUM_IMAGES_DEV}\" to /run/stratum/images"
+    info "osfordev_stratum_pull(): /run/stratum/images mounted from ${STRATUM_IMAGES_DEV}"
+    _osfordev_register_rollback_command "umount /run/stratum/images"
+
+    local LAYER_NUMBER=0
+    local IMAGE_HASH=
+    IMAGE_HASH=$(__stratum__resolve_image_hash "${STRATUM_ROOT_IMAGE}")
+    local ROOT_IMAGE_HASH_RESOLUTION_CODE=$?
+    if [ ${ROOT_IMAGE_HASH_RESOLUTION_CODE} -ne 0 ]; then
+        fatal "osfordev_stratum_pull(): Cannot read remote MANIFEST data. Exit with code: ${ROOT_IMAGE_HASH_RESOLUTION_CODE}."
+    fi
+    info "osfordev_stratum_pull(): Root image hash: ${IMAGE_HASH}"
+
+    while [ -n "${IMAGE_HASH}" ]; do
+        local IMAGE_DIR="/run/stratum/images/${IMAGE_HASH}"
+        local IMAGE_MANIFEST_FILE="${IMAGE_DIR}/MANIFEST"
+        local IMAGE_DATA_FILE="${IMAGE_DIR}/DATA"
+
+        if [ -d "${IMAGE_DIR}" ]; then
+            if [ ! -f "${IMAGE_MANIFEST_FILE}" -o ! -f "${IMAGE_DATA_FILE}" ]; then
+                warn "osfordev_stratum_pull(): Removing broken image dir \"${IMAGE_DIR}\" ..."
+                rm -rf "${IMAGE_DIR}" || fatal "osfordev_stratum_pull(): Failure remove broken image dir \"${IMAGE_DIR}\""
+            fi
+        fi
+
+        if [ ! -d "${IMAGE_DIR}" ]; then
+            info "osfordev_stratum_pull(): Downloading image ${IMAGE_HASH} ..."
+            __stratum__download_image "${IMAGE_HASH}" || fatal "osfordev_stratum_pull(): Cannot download image \"${IMAGE_HASH}\""
+            if [ ${LAYER_NUMBER} -eq 0 -a "${IMAGE_HASH}" != "${STRATUM_ROOT_IMAGE}" ]; then
+                ln -s "${IMAGE_HASH}" "/run/stratum/images/${STRATUM_ROOT_IMAGE}" || fatal "osfordev_stratum_pull(): Cannot link \"/run/stratum/images/${STRATUM_ROOT_IMAGE}\" to \"${IMAGE_HASH}\""
+                ln -s "${IMAGE_HASH}" "/run/stratum/images/system" || fatal "osfordev_stratum_pull(): Cannot link \"/run/stratum/images/system\" to \"${IMAGE_HASH}\""
+            fi
+        else
+            info "osfordev_stratum_pull(): ${IMAGE_HASH} already exist"
+        fi
+
+        local LAYER_NAME="layer${LAYER_NUMBER}"
+        local LAYER_DIR="${STATE_DIR}/${LAYER_NAME}"
+
+        if [ ! -d "${LAYER_DIR}" ]; then
+            mkdir "${LAYER_DIR}" || fatal "osfordev_stratum_pull(): Failure create layer dir ${STATE_DIR}"
+            info "osfordev_stratum_pull(): ${LAYER_DIR} layer directory was created"
+        fi
+
+        mount -t squashfs -o ro,loop "${IMAGE_DATA_FILE}" "${LAYER_DIR}" || fatal "osfordev_stratum_pull(): Failure mount layer \"${IMAGE_DATA_FILE}\" to \"${LAYER_DIR}\""
+        info "osfordev_stratum_pull(): ${IMAGE_DATA_FILE} layer image was mounted to ${LAYER_DIR}"
+        _osfordev_register_rollback_command "umount \"${LAYER_DIR}\""
+
+        IMAGE_HASH=$(cat "${IMAGE_MANIFEST_FILE}" | grep -e "^BASE: " | rev | cut -d' ' -f1 | rev)
+        let "LAYER_NUMBER=$LAYER_NUMBER+1"
+    done
+}
+
+osfordev_stratum_root() {
+    [ -n "$1" ] || fatal "osfordev_stratum_root(): Wrong argument error. Example: osfordev_stratum_root=\"vg0/stratum-images,ext4,vg0/stratum-state,ext4,d6779c7557a8f32fc5f4d636f74925241d9cc37a18d2f27683c3e87e983611bf\""
+
+    local STRATUM_IMAGES_DEV=
+    local STRATUM_IMAGES_FS=
+    local STRATUM_STATE_DEV=
+    local STRATUM_STATE_FS=
+    local STRATUM_ROOT_IMAGE=
+
+    STRATUM_IMAGES_DEV=/dev/$(echo "$1" | cut -d, -f1)
+    STRATUM_IMAGES_FS=$(echo "$1" | cut -d, -f2)
+    STRATUM_STATE_DEV=/dev/$(echo "$1" | cut -d, -f3)
+    STRATUM_STATE_FS=$(echo "$1" | cut -d, -f4)
+    STRATUM_ROOT_IMAGE=$(echo "$1" | cut -d, -f5)
+
+    mkdir /run/stratum || fatal "osfordev_stratum_root(): Failure create directory /run/stratum"
+    mkdir /run/stratum/images || fatal "osfordev_stratum_root(): Failure create directory /run/stratum/images"
+    mkdir /run/stratum/state || fatal "osfordev_stratum_root(): Failure create directory /run/stratum/state"
+
+    mount -t "${STRATUM_IMAGES_FS}" -o rw "${STRATUM_IMAGES_DEV}" /run/stratum/images || fatal "osfordev_stratum_root(): Failure mount \"${STRATUM_IMAGES_DEV}\" to /run/stratum/images"
+    info "osfordev_stratum_root(): /run/stratum/images mounted from ${STRATUM_IMAGES_DEV}"
+
+    mount -t "${STRATUM_STATE_FS}" -o rw "${STRATUM_STATE_DEV}" /run/stratum/state || fatal "osfordev_stratum_root(): Failure mount \"${STRATUM_STATE_DEV}\" to /run/stratum/state"
+    info "osfordev_stratum_root(): /run/stratum/state mounted from ${STRATUM_STATE_DEV}"
+
+    local LAYER_NUMBER=0
+    local IMAGE_HASH=
+    IMAGE_HASH=$(__stratum__resolve_image_hash "${STRATUM_ROOT_IMAGE}")
+    local ROOT_IMAGE_HASH_RESOLUTION_CODE=$?
+    if [ ${ROOT_IMAGE_HASH_RESOLUTION_CODE} -ne 0 ]; then
+        fatal "osfordev_stratum_root(): Cannot read remote MANIFEST data. Exit with code: ${ROOT_IMAGE_HASH_RESOLUTION_CODE}."
+    fi
+    info "osfordev_stratum_root(): Root image hash: ${IMAGE_HASH}"
+
+    local LOWERDIRS=
+
+    local STATE_DIR="/run/stratum/state/${IMAGE_HASH}"
+
+    if [ ! -d "${STATE_DIR}" ]; then
+        mkdir "${STATE_DIR}" || fatal "osfordev_stratum_root(): Failure create state dir ${STATE_DIR}"
+        info "osfordev_stratum_root(): ${STATE_DIR} state directory was created"
+    fi
+
+    while [ -n "${IMAGE_HASH}" ]; do
+        local IMAGE_DIR="/run/stratum/images/${IMAGE_HASH}"
+        local IMAGE_MANIFEST_FILE="${IMAGE_DIR}/MANIFEST"
+        local IMAGE_DATA_FILE="${IMAGE_DIR}/DATA"
+
+        if [ -d "${IMAGE_DIR}" ]; then
+            if [ ! -f "${IMAGE_MANIFEST_FILE}" -o ! -f "${IMAGE_DATA_FILE}" ]; then
+                warn "osfordev_stratum_root(): Removing broken image dir \"${IMAGE_DIR}\" ..."
+                rm -rf "${IMAGE_DIR}" || fatal "osfordev_stratum_root(): Failure remove broken image dir \"${IMAGE_DIR}\""
+            fi
+        fi
+
+        if [ ! -d "${IMAGE_DIR}" ]; then
+            info "osfordev_stratum_root(): Downloading image ${IMAGE_HASH} ..."
+            __stratum__download_image "${IMAGE_HASH}"
+            if [ ${LAYER_NUMBER} -eq 0 -a "${IMAGE_HASH}" != "${STRATUM_ROOT_IMAGE}" ]; then
+                ln -s "${IMAGE_HASH}" "/run/stratum/images/${STRATUM_ROOT_IMAGE}" || fatal "osfordev_stratum_root(): Cannot link \"/run/stratum/images/${STRATUM_ROOT_IMAGE}\" to \"${IMAGE_HASH}\""
+                ln -s "${IMAGE_HASH}" "/run/stratum/images/system" || fatal "osfordev_stratum_pull(): Cannot link \"/run/stratum/images/system\" to \"${IMAGE_HASH}\""
+            fi
+        else
+            info "osfordev_stratum_root(): ${IMAGE_HASH} already exist"
+        fi
+
+        local LAYER_NAME="layer${LAYER_NUMBER}"
+        local LAYER_DIR="${STATE_DIR}/${LAYER_NAME}"
+
+        if [ ! -d "${LAYER_DIR}" ]; then
+            mkdir "${LAYER_DIR}" || fatal "osfordev_stratum_root(): Failure create layer dir ${STATE_DIR}"
+            info "osfordev_stratum_root(): ${LAYER_DIR} layer directory was created"
+        fi
+
+        mount -t squashfs -o ro,loop "${IMAGE_DATA_FILE}" "${LAYER_DIR}" || fatal "osfordev_stratum_root(): Failure mount layer \"${IMAGE_DATA_FILE}\" to \"${LAYER_DIR}\""
+        info "osfordev_stratum_root(): ${IMAGE_DATA_FILE} layer image was mounted to ${LAYER_DIR}"
+
+        if [ -n "${LOWERDIRS}" ]; then
+            LOWERDIRS="${LOWERDIRS}:${LAYER_DIR}"
+        else
+            LOWERDIRS="${LAYER_DIR}"
+        fi
+
+        IMAGE_HASH=$(cat "${IMAGE_MANIFEST_FILE}" | grep -e "^BASE: " | rev | cut -d' ' -f1 | rev)
+        let "LAYER_NUMBER=$LAYER_NUMBER+1"
+    done
+
+    mount -o remount,ro "${STRATUM_IMAGES_DEV}" || fatal "osfordev_stratum_root(): Failure re-mount \"${STRATUM_IMAGES_DEV}\" as Read-Only."
+
+    local WORK_DIR="${STATE_DIR}/.work"
+
+    if [ ! -d "${WORK_DIR}" ]; then
+        mkdir "${WORK_DIR}" || fatal "osfordev_stratum_root(): Failure create layer dir ${WORK_DIR}"
+        info "osfordev_stratum_root(): ${WORK_DIR} work directory was created"
+    fi
+
+    local TOP_DIR="${STATE_DIR}/top"
+
+    if [ ! -d "${TOP_DIR}" ]; then
+        mkdir "${TOP_DIR}" || fatal "osfordev_stratum_root(): Failure create layer dir ${TOP_DIR}"
+        info "osfordev_stratum_root(): ${TOP_DIR} top directory was created"
+    fi
+
+    mount -t overlay -o "ro,lowerdir=${LOWERDIRS},workdir=${WORK_DIR},upperdir=${TOP_DIR}" stratum_root /newroot || fatal "osfordev_stratum_root(): Failure mount overlay /newroot based on ${LOWERDIRS}"
+}
+
+osfordev_uncrypt() {
+    [ -n "$1" ] || fatal "osfordev_uncrypt(): Wrong argument error. Example: osfordev_uncrypt=\"sda2,uncrypted-sda2[,discard][;vg0/luks-root,uncrypted-root[,discard]]\" (no /dev prefix)"
+    /uncrypt "$1" || fatal "osfordev_uncrypt(): Script /uncrypt failed."
+    return 0
+}
+
+osfordev_verbose() {
+    set -x
+}
+
+osfordev_vg() {
+    [ -n "$1" ] || fatal "osfordev_vg(): Wrong argument error. Example: osfordev_vg=\"vg0;vg1;vg2;...\" (no /dev prefix)"
+
+    info " Scanning for Volume Groups"
+    /sbin/vgscan || fatal "osfordev_vg(): Failure scan volume groups"
+
+     local FRIENDLY_ARGS=
+
+    FRIENDLY_ARGS=$(echo "$1" | sed -r 's/;/ /g')
+
+    for VG in ${FRIENDLY_ARGS}; do
+         info " Activating Volume Group: ${VG}"
+        /sbin/vgchange --activate y "${VG}" || fatal "osfordev_vg(): Failure activate volume ${VG}"
+        _osfordev_register_rollback_command "/sbin/vgchange --activate n \"${VG}\""
+    done
+}
