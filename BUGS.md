@@ -1,5 +1,9 @@
 # Bugs 🐛
 
+## 2024-06-12
+
+`mkfs.ext4` - broken link to `/usr/sbin/mke2fs` instead `/sbin/mke2fs`
+
 ## 2024-05-06
 
 Symptoms: command `vgchange -ay` hungs infinitely.

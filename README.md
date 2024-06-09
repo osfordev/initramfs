@@ -18,10 +18,16 @@ IMAGE=ghcr.io/osfordev/initramfs/amd64/5.15.158
 
 docker pull "${IMAGE}"
 
+# == Optionally ==
+DEBUG=yes
+DEBUG_CHROOT=yes
+# ================
+
 docker run \
   --rm --interactive --tty \
   --mount type=bind,source="$(pwd)",target=/work \
   --env DEBUG=yes \
+  --env DEBUG_CHROOT=yes \
   "${IMAGE}"
 ```
 
