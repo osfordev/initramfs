@@ -415,7 +415,7 @@ osfordev_stratum_wipe_images() {
 }
 
 osfordev_stratum_reset_system() {
-    [ -n "$1" ] || fatal "osfordev_stratum_reset_system(system-dev,images-dev,image-name-or-hash): Wrong argument error. Example: osfordev_stratum_root=\"vg0/system,vg0/stratum-images\""
+    [ -n "$1" ] || fatal "osfordev_stratum_reset_system(system-dev,images-dev,image-name-or-hash): Wrong argument error. Example: osfordev_stratum_reset_system=\"vg0/system,vg0/stratum-images\""
 
     local SYSTEM_DEV=
     local STRATUM_IMAGES_DEV=
