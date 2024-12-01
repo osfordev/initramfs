@@ -1,4 +1,4 @@
-ARG KERNEL_VERSION=5.15.167
+ARG KERNEL_VERSION=5.15.173
 
 # Target container with Gentoo Linux + necessary tools to build kernel and initramfs
 FROM --platform=linux/386 theanurin/gentoo-sources-bundle:i686-${KERNEL_VERSION} as stage
