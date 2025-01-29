@@ -259,10 +259,13 @@ osfordev_snap() {
 
 osfordev_ssh() {
     [ ! -f /root/dropbear.rsa ] && /usr/bin/dropbearkey -t rsa -f /root/dropbear.rsa
-    [ ! -f /root/dropbear.dss ] && /usr/bin/dropbearkey -t dss -f /root/dropbear.dss
-    # /usr/bin/dropbearkey -t rsa -f /root/dropbear.rsa; /usr/bin/dropbearkey -t dss -f /root/dropbear.dss; strace /usr/sbin/dropbear -p 10022 -r /root/dropbear.rsa -d /root/dropbear.dss -F
 
-    /usr/sbin/dropbear -r /root/dropbear.rsa -d /root/dropbear.dss || fatal "Failure start Dropbear SSH Server"
+    # DSS key was removed
+    # - https://github.com/mkj/dropbear/issues/288
+    # - https://github.com/grazzolini/mkinitcpio-dropbear/issues/8
+    #[ ! -f /root/dropbear.dss ] && /usr/bin/dropbearkey -t dss -f /root/dropbear.dss
+
+    /usr/sbin/dropbear -r /root/dropbear.rsa || fatal "Failure start Dropbear SSH Server"
     _osfordev_register_cleanup_command "pkill -f /usr/sbin/dropbear"
 }
 

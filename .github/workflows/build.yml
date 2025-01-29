@@ -15,6 +15,8 @@ jobs:
     outputs:
       gentoo_archs: ${{ steps.gentoo.outputs.archs }}
       kernel_version: ${{ steps.version.outputs.kernel }}
+      kernel_version_major: ${{ steps.version.outputs.kernel_major }}
+      kernel_version_major_minor: ${{ steps.version.outputs.kernel_major_minor }}
       rc_version: ${{ steps.version.outputs.rc }}
       yyyymmddhhmm_timestamp: ${{ steps.timestamp.outputs.yyyymmddhhmm }}
     steps:
@@ -39,6 +41,8 @@ jobs:
           fi
           echo "rc=${BUILD_RC_VERSION}" | tee -a "${GITHUB_OUTPUT}"
           echo "kernel=${BUILD_KERNEL_VERSION}" | tee -a "${GITHUB_OUTPUT}"
+          echo "kernel_major_minor=$(echo -n "${BUILD_KERNEL_VERSION}" | cut -d. -f1-2)" | tee -a "${GITHUB_OUTPUT}"
+          echo "kernel_major=$(echo -n "${BUILD_KERNEL_VERSION}" | cut -d. -f1)" | tee -a "${GITHUB_OUTPUT}"
 
       - id: timestamp
         run: |
@@ -143,11 +147,27 @@ jobs:
       - name: Build
         run: |
           DEBUG=yes ./build-initramfs.sh
+          cp .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz .build/initramfs-${{ needs.configure.outputs.kernel_version_major_minor }}.cpio.gz
+          cp .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz .build/initramfs-${{ needs.configure.outputs.kernel_version_major }}.cpio.gz
 
       - name: Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: initramfs
+          name: initramfs-${{ needs.configure.outputs.kernel_version_major }}
+          path: .build/initramfs-${{ needs.configure.outputs.kernel_version_major }}.cpio.gz
+          retention-days: 1
+
+      - name: Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: initramfs-${{ needs.configure.outputs.kernel_version_major_minor }}
+          path: .build/initramfs-${{ needs.configure.outputs.kernel_version_major_minor }}.cpio.gz
+          retention-days: 1
+
+      - name: Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: initramfs-${{ needs.configure.outputs.kernel_version }}
           path: .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz
           retention-days: 1
 
@@ -155,4 +175,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:
+          tag_name: ${{ needs.configure.outputs.kernel_version }}
+          name: ${{ needs.configure.outputs.kernel_version }}
           files: .build/initramfs-${{ needs.configure.outputs.kernel_version }}.cpio.gz
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          tag_name: ${{ needs.configure.outputs.kernel_version_major_minor }}
+          name: ${{ needs.configure.outputs.kernel_version_major_minor }}
+          files: .build/initramfs-${{ needs.configure.outputs.kernel_version_major_minor }}.cpio.gz
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          tag_name: ${{ needs.configure.outputs.kernel_version_major }}
+          name: ${{ needs.configure.outputs.kernel_version_major }}
+          files: .build/initramfs-${{ needs.configure.outputs.kernel_version_major }}.cpio.gz

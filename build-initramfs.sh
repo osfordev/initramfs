@@ -4,12 +4,12 @@
 source /etc/profile
 
 if [ -z "${GENTOO_ARCH}" ]; then
-	echo "Look like you have wrong build container. The container should present an evironment variable GENTOO_ARCH."
+	echo "Look like you have wrong build container. The container should present an environment variable GENTOO_ARCH."
 	exit 1
 fi
 
 if [ -z "${KERNEL_VERSION}" ]; then
-	echo "Look like you have wrong build container. The container should present an evironment variable KERNEL_VERSION."
+	echo "Look like you have wrong build container. The container should present an environment variable KERNEL_VERSION."
 	exit 1
 fi
 
@@ -251,6 +251,10 @@ if [ "${DEBUG}" == "yes" ]; then
 	if [ "${DEBUG_CHROOT}" == "yes" ]; then
 		# Debugging
 		#mount --bind /dev "${BUILD_DIR}/${INITRAMFS_FILE}/dev"
+		echo "============================================================================================="
+		echo "You are chroot inside initramfs for debug purposes. Exit current shell to finalize the build."
+		echo "============================================================================================="
+		echo
 		(cd "${BUILD_DIR}/${INITRAMFS_FILE}" && chroot . /bin/busybox sh -i)
 		#(cd "${BUILD_DIR}/${INITRAMFS_FILE}" && exec /bin/busybox sh)
 		# set +e
