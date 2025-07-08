@@ -37,7 +37,7 @@ jobs:
           else
             # Default values
             BUILD_RC_VERSION=""
-            BUILD_KERNEL_VERSION="5.15.173"
+            BUILD_KERNEL_VERSION="6.12.21"
           fi
           echo "rc=${BUILD_RC_VERSION}" | tee -a "${GITHUB_OUTPUT}"
           echo "kernel=${BUILD_KERNEL_VERSION}" | tee -a "${GITHUB_OUTPUT}"
